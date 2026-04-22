@@ -1,0 +1,1799 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>动物森林 - Animal Forest</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: linear-gradient(180deg, #87CEEB 0%, #E8F5E9 100%);
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      overflow: hidden;
+    }
+    #gameContainer {
+      position: relative;
+      width: 100%;
+      max-width: 800px;
+      aspect-ratio: 4/3;
+    }
+    #gameCanvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      border-radius: 16px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+      cursor: pointer;
+    }
+    #rotateHint {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: #E8F5E9;
+      z-index: 9999;
+      justify-content: center;
+      align-items: center;
+      flex-direction: column;
+      font-size: 24px;
+      color: #4CAF50;
+    }
+    @media (orientation: portrait) and (max-width: 768px) {
+      #rotateHint { display: flex; }
+      #gameContainer { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div id="rotateHint">📱 请横屏游玩<br><span style="font-size:48px">↻</span></div>
+  <div id="gameContainer">
+    <canvas id="gameCanvas"></canvas>
+  </div>
+
+<script>
+// ==================== ANIMAL FOREST - COMPLETE MVP ====================
+
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+// Canvas setup
+const GAME_WIDTH = 800;
+const GAME_HEIGHT = 600;
+canvas.width = GAME_WIDTH;
+canvas.height = GAME_HEIGHT;
+
+// ==================== CONSTANTS ====================
+const COLORS = {
+  forestGreen: '#4CAF50',
+  toddlerOrange: '#FF9800',
+  childBlue: '#2196F3',
+  starGold: '#FFD700',
+  bgGreen: '#E8F5E9',
+  textDark: '#333333',
+  white: '#FFFFFF'
+};
+
+const ANIMALS = {
+  fox:    { name: '小狐狸', color: '#FF7043', subject: 'numbers',  mode: 'toddler', emoji: '🦊' },
+  bear:   { name: '小熊',   color: '#8D6E63', subject: 'shapes',   mode: 'toddler', emoji: '🐻' },
+  bird:   { name: '小鸟',   color: '#FFCA28', subject: 'letters',  mode: 'both',    emoji: '🐦' },
+  cat:    { name: '小猫',   color: '#78909C', subject: 'chinese',  mode: 'child',   emoji: '🐱' },
+  monkey: { name: '小猴',   color: '#A1887F', subject: 'math',     mode: 'child',   emoji: '🐵' },
+  owl:    { name: '小猫头鹰', color: '#5D4037', subject: 'logic',   mode: 'child',   emoji: '🦉' }
+};
+
+const SHAPES = ['circle', 'square', 'triangle', 'rectangle', 'ellipse', 'diamond'];
+const SHAPE_NAMES = { circle: '圆形', square: '方形', triangle: '三角形', rectangle: '长方形', ellipse: '椭圆', diamond: '菱形' };
+const SHAPE_COLORS = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD'];
+
+const DIGITS = ['0','1','2','3','4','5','6','7','8','9'];
+const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+
+// ==================== GAME STATE ====================
+let currentScene = 'splash';
+let selectedMode = 'toddler';
+let selectedAnimal = null;
+let currentLevel = 1;
+let currentQuestion = 0;
+let totalQuestions = 10;
+let correctCount = 0;
+let wrongCount = 0;
+let stars = 0;
+let sessionStars = 0;
+let sessionCorrect = 0;
+let sessionTotal = 0;
+let questions = [];
+let answerOptions = [];
+let selectedAnswer = null;
+let isAnswered = false;
+let animFrame = 0;
+let particles = [];
+let lastClickTime = 0;
+let clickCount = 0;
+let parentPin = '0000';
+let parentPinInput = '';
+let parentPinAttempts = 0;
+let parentPinLockUntil = 0;
+let inputMode = false;
+let inputText = '';
+let inputPrompt = '';
+let gameStartTime = Date.now();
+let todayStr = new Date().toISOString().split('T')[0];
+
+// Save data structure
+let saveData = {
+  version: 1,
+  pin: '0000',
+  mode: 'toddler',
+  stars: 0,
+  animals: {
+    fox:    { level: 1, stars: 0, completed: [] },
+    bear:   { level: 1, stars: 0, completed: [] },
+    bird:   { level: 1, stars: 0, completed: [] },
+    cat:    { level: 1, stars: 0, completed: [] },
+    monkey: { level: 1, stars: 0, completed: [] },
+    owl:    { level: 1, stars: 0, completed: [] }
+  },
+  stats: {
+    fox:    { total: 0, correct: 0 },
+    bear:   { total: 0, correct: 0 },
+    bird:   { total: 0, correct: 0 },
+    cat:    { total: 0, correct: 0 },
+    monkey: { total: 0, correct: 0 },
+    owl:    { total: 0, correct: 0 }
+  },
+  daily: {}
+};
+
+// ==================== AUDIO SYSTEM ====================
+class SoundSystem {
+  constructor() {
+    this.ctx = null;
+    this.initialized = false;
+  }
+
+  init() {
+    if (this.initialized) return;
+    try {
+      this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+      this.initialized = true;
+    } catch(e) {}
+  }
+
+  play(type) {
+    if (!this.initialized) this.init();
+    if (!this.ctx) return;
+    
+    const now = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+    
+    switch(type) {
+      case 'correct':
+        osc.frequency.setValueAtTime(523, now);
+        osc.frequency.setValueAtTime(659, now + 0.1);
+        osc.frequency.setValueAtTime(784, now + 0.2);
+        gain.gain.setValueAtTime(0.3, now);
+        gain.gain.exponentialDecayTo && gain.gain.exponentialDecayTo(0.01, now + 0.3);
+        gain.gain.setValueAtTime(0.3, now);
+        gain.gain.linearRampToValueAtTime(0.01, now + 0.3);
+        osc.start(now);
+        osc.stop(now + 0.3);
+        break;
+      case 'wrong':
+        osc.frequency.setValueAtTime(392, now);
+        osc.frequency.setValueAtTime(330, now + 0.15);
+        osc.frequency.setValueAtTime(262, now + 0.3);
+        gain.gain.setValueAtTime(0.3, now);
+        gain.gain.linearRampToValueAtTime(0.01, now + 0.4);
+        osc.start(now);
+        osc.stop(now + 0.4);
+        break;
+      case 'star':
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(784, now);
+        osc.frequency.setValueAtTime(1047, now + 0.1);
+        osc.frequency.setValueAtTime(1568, now + 0.2);
+        gain.gain.setValueAtTime(0.2, now);
+        gain.gain.linearRampToValueAtTime(0.01, now + 0.35);
+        osc.start(now);
+        osc.stop(now + 0.35);
+        break;
+      case 'click':
+        osc.frequency.setValueAtTime(800, now);
+        gain.gain.setValueAtTime(0.15, now);
+        gain.gain.linearRampToValueAtTime(0.01, now + 0.05);
+        osc.start(now);
+        osc.stop(now + 0.05);
+        break;
+      case 'win':
+        [523, 659, 784, 1047].forEach((f, i) => {
+          const o = this.ctx.createOscillator();
+          const g = this.ctx.createGain();
+          o.connect(g);
+          g.connect(this.ctx.destination);
+          o.frequency.value = f;
+          g.gain.setValueAtTime(0.2, now + i * 0.15);
+          g.gain.linearRampToValueAtTime(0.01, now + i * 0.15 + 0.3);
+          o.start(now + i * 0.15);
+          o.stop(now + i * 0.15 + 0.3);
+        });
+        break;
+    }
+  }
+}
+
+const sound = new SoundSystem();
+
+// ==================== STORAGE ====================
+function loadSaveData() {
+  try {
+    const data = localStorage.getItem('animal_forest_save');
+    if (data) {
+      saveData = JSON.parse(data);
+      stars = saveData.stars;
+      parentPin = saveData.pin || '0000';
+    }
+    if (!saveData.daily[todayStr]) {
+      saveData.daily[todayStr] = { time: 0, sessions: 0 };
+    }
+  } catch(e) {}
+}
+
+function saveSaveData() {
+  try {
+    saveData.stars = stars;
+    saveData.pin = parentPin;
+    localStorage.setItem('animal_forest_save', JSON.stringify(saveData));
+  } catch(e) {}
+}
+
+// ==================== UTILITY ====================
+function getAnimalForSubject(subject, mode) {
+  for (const [key, animal] of Object.entries(ANIMALS)) {
+    if (animal.subject === subject && (animal.mode === mode || animal.mode === 'both')) {
+      return key;
+    }
+  }
+  return null;
+}
+
+function shuffle(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function randomInt(min, max) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function randomChoice(arr) {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+function drawStar(x, y, size, color = COLORS.starGold) {
+  ctx.save();
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  for (let i = 0; i < 5; i++) {
+    const angle = (i * 4 * Math.PI / 5) - Math.PI / 2;
+    const px = x + Math.cos(angle) * size;
+    const py = y + Math.sin(angle) * size;
+    i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawButton(x, y, w, h, color, text, textColor = '#fff', radius = 20) {
+  ctx.fillStyle = color;
+  roundRect(x, y, w, h, radius);
+  ctx.fill();
+  if (text) {
+    ctx.fillStyle = textColor;
+    ctx.font = `bold ${Math.min(h * 0.5, 28)}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, x + w/2, y + h/2);
+  }
+}
+
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
+function drawText(text, x, y, size = 24, color = COLORS.textDark, align = 'center') {
+  ctx.fillStyle = color;
+  ctx.font = `bold ${size}px sans-serif`;
+  ctx.textAlign = align;
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, x, y);
+}
+
+function isPointInRect(px, py, x, y, w, h) {
+  return px >= x && px <= x + w && py >= y && py <= y + h;
+}
+
+// ==================== DRAWING FUNCTIONS ====================
+function drawBackground() {
+  // Sky gradient
+  const skyGrad = ctx.createLinearGradient(0, 0, 0, GAME_HEIGHT);
+  skyGrad.addColorStop(0, '#87CEEB');
+  skyGrad.addColorStop(1, '#E8F5E9');
+  ctx.fillStyle = skyGrad;
+  ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+
+  // Ground
+  ctx.fillStyle = '#90EE90';
+  ctx.fillRect(0, GAME_HEIGHT - 80, GAME_WIDTH, 80);
+
+  // Trees
+  for (let i = 0; i < 6; i++) {
+    drawTree(80 + i * 130, GAME_HEIGHT - 80, 0.6 + (i % 3) * 0.2);
+  }
+}
+
+function drawTree(x, y, scale = 1) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(scale, scale);
+  // Trunk
+  ctx.fillStyle = '#8B4513';
+  ctx.fillRect(-10, -60, 20, 60);
+  // Leaves
+  ctx.fillStyle = '#228B22';
+  ctx.beginPath();
+  ctx.moveTo(0, -120);
+  ctx.lineTo(-40, -50);
+  ctx.lineTo(40, -50);
+  ctx.closePath();
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(0, -90);
+  ctx.lineTo(-35, -30);
+  ctx.lineTo(35, -30);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawAnimal(key, x, y, size, bounce = false) {
+  const animal = ANIMALS[key];
+  const bounceOffset = bounce ? Math.sin(animFrame * 0.1) * 5 : 0;
+  y += bounceOffset;
+  
+  ctx.save();
+  ctx.translate(x, y);
+  
+  switch(key) {
+    case 'fox':
+      drawFox(size, animal.color);
+      break;
+    case 'bear':
+      drawBear(size, animal.color);
+      break;
+    case 'bird':
+      drawBird(size, animal.color);
+      break;
+    case 'cat':
+      drawCat(size, animal.color);
+      break;
+    case 'monkey':
+      drawMonkey(size, animal.color);
+      break;
+    case 'owl':
+      drawOwl(size, animal.color);
+      break;
+  }
+  
+  ctx.restore();
+}
+
+function drawFox(size, color) {
+  // Body
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.ellipse(0, size * 0.3, size * 0.4, size * 0.35, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Head
+  ctx.beginPath();
+  ctx.ellipse(0, -size * 0.2, size * 0.35, size * 0.3, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Ears
+  ctx.beginPath();
+  ctx.moveTo(-size * 0.25, -size * 0.4);
+  ctx.lineTo(-size * 0.35, -size * 0.7);
+  ctx.lineTo(-size * 0.1, -size * 0.45);
+  ctx.closePath();
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(size * 0.25, -size * 0.4);
+  ctx.lineTo(size * 0.35, -size * 0.7);
+  ctx.lineTo(size * 0.1, -size * 0.45);
+  ctx.closePath();
+  ctx.fill();
+  // Snout
+  ctx.fillStyle = '#FFF';
+  ctx.beginPath();
+  ctx.ellipse(0, -size * 0.05, size * 0.15, size * 0.1, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Nose
+  ctx.fillStyle = '#333';
+  ctx.beginPath();
+  ctx.arc(0, -size * 0.1, size * 0.05, 0, Math.PI * 2);
+  ctx.fill();
+  // Eyes
+  ctx.fillStyle = '#333';
+  ctx.beginPath();
+  ctx.arc(-size * 0.15, -size * 0.3, size * 0.05, 0, Math.PI * 2);
+  ctx.arc(size * 0.15, -size * 0.3, size * 0.05, 0, Math.PI * 2);
+  ctx.fill();
+  // Tail
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.ellipse(size * 0.5, size * 0.2, size * 0.3, size * 0.15, Math.PI * 0.3, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#FFF';
+  ctx.beginPath();
+  ctx.ellipse(size * 0.65, size * 0.15, size * 0.1, size * 0.08, Math.PI * 0.3, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawBear(size, color) {
+  // Body
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.ellipse(0, size * 0.3, size * 0.4, size * 0.35, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Head
+  ctx.beginPath();
+  ctx.arc(0, -size * 0.2, size * 0.35, 0, Math.PI * 2);
+  ctx.fill();
+  // Ears
+  ctx.beginPath();
+  ctx.arc(-size * 0.3, -size * 0.45, size * 0.15, 0, Math.PI * 2);
+  ctx.arc(size * 0.3, -size * 0.45, size * 0.15, 0, Math.PI * 2);
+  ctx.fill();
+  // Snout
+  ctx.fillStyle = '#D7CCC8';
+  ctx.beginPath();
+  ctx.ellipse(0, -size * 0.1, size * 0.18, size * 0.12, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Nose
+  ctx.fillStyle = '#333';
+  ctx.beginPath();
+  ctx.arc(0, -size * 0.15, size * 0.06, 0, Math.PI * 2);
+  ctx.fill();
+  // Eyes
+  ctx.beginPath();
+  ctx.arc(-size * 0.15, -size * 0.3, size * 0.05, 0, Math.PI * 2);
+  ctx.arc(size * 0.15, -size * 0.3, size * 0.05, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawBird(size, color) {
+  // Body
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.ellipse(0, size * 0.2, size * 0.3, size * 0.25, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Head
+  ctx.beginPath();
+  ctx.arc(0, -size * 0.15, size * 0.25, 0, Math.PI * 2);
+  ctx.fill();
+  // Beak
+  ctx.fillStyle = '#FF9800';
+  ctx.beginPath();
+  ctx.moveTo(0, -size * 0.1);
+  ctx.lineTo(size * 0.15, -size * 0.05);
+  ctx.lineTo(0, size * 0.05);
+  ctx.closePath();
+  ctx.fill();
+  // Wings
+  ctx.fillStyle = '#FFB300';
+  ctx.beginPath();
+  ctx.ellipse(-size * 0.3, size * 0.15, size * 0.15, size * 0.2, -Math.PI * 0.3, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(size * 0.3, size * 0.15, size * 0.15, size * 0.2, Math.PI * 0.3, 0, Math.PI * 2);
+  ctx.fill();
+  // Eyes
+  ctx.fillStyle = '#333';
+  ctx.beginPath();
+  ctx.arc(-size * 0.1, -size * 0.2, size * 0.04, 0, Math.PI * 2);
+  ctx.arc(size * 0.1, -size * 0.2, size * 0.04, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawCat(size, color) {
+  // Body
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.ellipse(0, size * 0.3, size * 0.35, size * 0.3, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Head
+  ctx.beginPath();
+  ctx.arc(0, -size * 0.15, size * 0.3, 0, Math.PI * 2);
+  ctx.fill();
+  // Ears
+  ctx.beginPath();
+  ctx.moveTo(-size * 0.25, -size * 0.35);
+  ctx.lineTo(-size * 0.35, -size * 0.65);
+  ctx.lineTo(-size * 0.1, -size * 0.4);
+  ctx.closePath();
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(size * 0.25, -size * 0.35);
+  ctx.lineTo(size * 0.35, -size * 0.65);
+  ctx.lineTo(size * 0.1, -size * 0.4);
+  ctx.closePath();
+  ctx.fill();
+  // Inner ears
+  ctx.fillStyle = '#B0BEC5';
+  ctx.beginPath();
+  ctx.moveTo(-size * 0.22, -size * 0.38);
+  ctx.lineTo(-size * 0.28, -size * 0.55);
+  ctx.lineTo(-size * 0.15, -size * 0.4);
+  ctx.closePath();
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(size * 0.22, -size * 0.38);
+  ctx.lineTo(size * 0.28, -size * 0.55);
+  ctx.lineTo(size * 0.15, -size * 0.4);
+  ctx.closePath();
+  ctx.fill();
+  // Eyes
+  ctx.fillStyle = '#333';
+  ctx.beginPath();
+  ctx.ellipse(-size * 0.12, -size * 0.2, size * 0.05, size * 0.08, 0, 0, Math.PI * 2);
+  ctx.ellipse(size * 0.12, -size * 0.2, size * 0.05, size * 0.08, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Nose
+  ctx.fillStyle = '#FFB6C1';
+  ctx.beginPath();
+  ctx.moveTo(0, -size * 0.08);
+  ctx.lineTo(-size * 0.05, -size * 0.02);
+  ctx.lineTo(size * 0.05, -size * 0.02);
+  ctx.closePath();
+  ctx.fill();
+}
+
+function drawMonkey(size, color) {
+  // Body
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.ellipse(0, size * 0.3, size * 0.35, size * 0.3, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Head
+  ctx.beginPath();
+  ctx.arc(0, -size * 0.15, size * 0.3, 0, Math.PI * 2);
+  ctx.fill();
+  // Ears
+  ctx.fillStyle = '#D7CCC8';
+  ctx.beginPath();
+  ctx.arc(-size * 0.32, -size * 0.15, size * 0.12, 0, Math.PI * 2);
+  ctx.arc(size * 0.32, -size * 0.15, size * 0.12, 0, Math.PI * 2);
+  ctx.fill();
+  // Face
+  ctx.fillStyle = '#FFCCBC';
+  ctx.beginPath();
+  ctx.ellipse(0, -size * 0.05, size * 0.18, size * 0.15, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Eyes
+  ctx.fillStyle = '#333';
+  ctx.beginPath();
+  ctx.arc(-size * 0.1, -size * 0.2, size * 0.04, 0, Math.PI * 2);
+  ctx.arc(size * 0.1, -size * 0.2, size * 0.04, 0, Math.PI * 2);
+  ctx.fill();
+  // Nose
+  ctx.fillStyle = '#333';
+  ctx.beginPath();
+  ctx.arc(-size * 0.05, -size * 0.05, size * 0.03, 0, Math.PI * 2);
+  ctx.arc(size * 0.05, -size * 0.05, size * 0.03, 0, Math.PI * 2);
+  ctx.fill();
+  // Tail
+  ctx.strokeStyle = color;
+  ctx.lineWidth = size * 0.08;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.arc(size * 0.4, size * 0.4, size * 0.25, Math.PI * 0.5, Math.PI * 1.5);
+  ctx.stroke();
+}
+
+function drawOwl(size, color) {
+  // Body
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.ellipse(0, size * 0.25, size * 0.35, size * 0.4, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Head
+  ctx.beginPath();
+  ctx.arc(0, -size * 0.25, size * 0.3, 0, Math.PI * 2);
+  ctx.fill();
+  // Ear tufts
+  ctx.beginPath();
+  ctx.moveTo(-size * 0.2, -size * 0.45);
+  ctx.lineTo(-size * 0.25, -size * 0.7);
+  ctx.lineTo(-size * 0.1, -size * 0.5);
+  ctx.closePath();
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(size * 0.2, -size * 0.45);
+  ctx.lineTo(size * 0.25, -size * 0.7);
+  ctx.lineTo(size * 0.1, -size * 0.5);
+  ctx.closePath();
+  ctx.fill();
+  // Eye circles
+  ctx.fillStyle = '#FFF';
+  ctx.beginPath();
+  ctx.arc(-size * 0.15, -size * 0.3, size * 0.15, 0, Math.PI * 2);
+  ctx.arc(size * 0.15, -size * 0.3, size * 0.15, 0, Math.PI * 2);
+  ctx.fill();
+  // Eyes
+  ctx.fillStyle = '#333';
+  ctx.beginPath();
+  ctx.arc(-size * 0.15, -size * 0.3, size * 0.08, 0, Math.PI * 2);
+  ctx.arc(size * 0.15, -size * 0.3, size * 0.08, 0, Math.PI * 2);
+  ctx.fill();
+  // Beak
+  ctx.fillStyle = '#FF9800';
+  ctx.beginPath();
+  ctx.moveTo(0, -size * 0.2);
+  ctx.lineTo(-size * 0.08, -size * 0.1);
+  ctx.lineTo(0, -size * 0.05);
+  ctx.lineTo(size * 0.08, -size * 0.1);
+  ctx.closePath();
+  ctx.fill();
+  // Belly
+  ctx.fillStyle = '#D7CCC8';
+  ctx.beginPath();
+  ctx.ellipse(0, size * 0.35, size * 0.2, size * 0.25, 0, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+// ==================== PARTICLE SYSTEM ====================
+function createParticles(x, y, type = 'star') {
+  const count = type === 'star' ? 8 : 12;
+  for (let i = 0; i < count; i++) {
+    const angle = (Math.PI * 2 / count) * i;
+    const speed = 3 + Math.random() * 3;
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - 2,
+      life: 60,
+      type,
+      color: type === 'star' ? COLORS.starGold : (type === 'correct' ? '#4CAF50' : '#FF5252'),
+      size: type === 'star' ? 12 : 8
+    });
+  }
+}
+
+function updateParticles() {
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vy += 0.15;
+    p.life--;
+    if (p.life <= 0) {
+      particles.splice(i, 1);
+    }
+  }
+}
+
+function drawParticles() {
+  for (const p of particles) {
+    ctx.save();
+    ctx.globalAlpha = p.life / 60;
+    if (p.type === 'star') {
+      drawStar(p.x, p.y, p.size, p.color);
+    } else {
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size * (p.life / 60), 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+}
+
+// ==================== QUESTION GENERATORS ====================
+function generateQuestions(animalKey, level) {
+  const animal = ANIMALS[animalKey];
+  const questions = [];
+  
+  switch(animal.subject) {
+    case 'numbers':
+      return generateNumberQuestions(level);
+    case 'shapes':
+      return generateShapeQuestions(level);
+    case 'math':
+      return generateMathQuestions(level);
+    case 'logic':
+      return generateLogicQuestions(level);
+    default:
+      return generateNumberQuestions(level);
+  }
+}
+
+function generateNumberQuestions(level) {
+  const maxNum = level === 1 ? 5 : level === 2 ? 10 : 20;
+  const questions = [];
+  
+  for (let i = 0; i < totalQuestions; i++) {
+    const num = randomInt(1, maxNum);
+    const type = randomChoice(['recognize', 'count']);
+    
+    if (type === 'recognize') {
+      // Show number, pick correct visual
+      const visuals = [];
+      for (let j = 1; j <= Math.min(num, 8); j++) {
+        visuals.push(randomChoice(['🍎','⭐','●']));
+      }
+      questions.push({
+        type: 'recognize',
+        text: `数字 ${num}`,
+        display: visuals.slice(0, num).join(' '),
+        answer: num,
+        options: shuffle([num, randomInt(1, maxNum), randomInt(1, maxNum)]).filter((v, i, a) => a.indexOf(v) === i).slice(0, 3),
+        unit: '个'
+      });
+    } else {
+      // Count items
+      const count = randomInt(1, Math.min(maxNum, 10));
+      const item = randomChoice(['🍎','🐟','🐰','⭐']);
+      questions.push({
+        type: 'count',
+        text: `数一数，有几个？`,
+        display: item.repeat(count),
+        answer: count,
+        options: shuffle([count, randomInt(1, Math.min(maxNum, 10)), randomInt(1, Math.min(maxNum, 10))]).filter((v, i, a) => a.indexOf(v) === i).slice(0, 3)
+      });
+    }
+  }
+  return questions;
+}
+
+function generateShapeQuestions(level) {
+  const questions = [];
+  const shapeCount = level === 1 ? 3 : level === 2 ? 5 : 6;
+  const availableShapes = SHAPES.slice(0, shapeCount);
+  
+  for (let i = 0; i < totalQuestions; i++) {
+    const shape = randomChoice(availableShapes);
+    questions.push({
+      type: 'shape',
+      text: `这是什麼圖形？`,
+      display: shape,
+      answer: shape,
+      options: shuffle(availableShapes).slice(0, 3),
+      shapes: [shape]
+    });
+  }
+  return questions;
+}
+
+function generateMathQuestions(level) {
+  const questions = [];
+  
+  for (let i = 0; i < totalQuestions; i++) {
+    let a, b, op, answer;
+    
+    if (level === 1) {
+      // 10以内加减
+      a = randomInt(1, 9);
+      b = randomInt(1, 9 - a);
+      op = randomChoice(['+']);
+      answer = a + b;
+    } else if (level === 2) {
+      // 20以内加减
+      a = randomInt(5, 15);
+      b = randomInt(1, 15);
+      op = randomChoice(['+', '-']);
+      answer = op === '+' ? a + b : a - b;
+    } else {
+      // 乘除
+      if (Math.random() > 0.5) {
+        a = randomInt(2, 9);
+        b = randomInt(2, 9);
+        op = '×';
+        answer = a * b;
+      } else {
+        answer = randomInt(2, 9);
+        b = randomInt(2, 9);
+        a = answer * b;
+        op = '÷';
+      }
+    }
+    
+    const text = op === '+' ? `${a} + ${b} = ?` : op === '-' ? `${a} - ${b} = ?` : op === '×' ? `${a} × ${b} = ?` : `${a} ÷ ${b} = ?`;
+    const wrongAnswers = [
+      answer + randomInt(1, 5),
+      answer - randomInt(1, 5),
+      answer + randomInt(-3, 3)
+    ].filter(v => v !== answer && v > 0);
+    
+    questions.push({
+      type: 'math',
+      text,
+      answer,
+      options: shuffle([answer, ...wrongAnswers.slice(0, 2)]).slice(0, 3)
+    });
+  }
+  return questions;
+}
+
+function generateLogicQuestions(level) {
+  const questions = [];
+  
+  for (let i = 0; i < totalQuestions; i++) {
+    if (level === 1) {
+      // AAB pattern
+      const items = ['🔴', '🔵', '🟢', '🟡'];
+      const item = randomChoice(items);
+      const seq = [item, item, randomChoice(items.filter(v => v !== item)), '?'];
+      questions.push({
+        type: 'logic',
+        text: '找规律，下一个是什么？',
+        display: seq.slice(0, 3).join('  '),
+        answer: item,
+        options: shuffle([item, randomChoice(items.filter(v => v !== item)), randomChoice(items.filter(v => v !== item))])
+      });
+    } else if (level === 2) {
+      // ABC pattern
+      const items = ['🔴', '🔵', '🟢'];
+      const pattern = items.slice(0, 3);
+      const seq = [...pattern, '?'];
+      questions.push({
+        type: 'logic',
+        text: '找规律，下一个是什么？',
+        display: seq.slice(0, 4).join('  '),
+        answer: pattern[0],
+        options: shuffle([pattern[0], pattern[1], pattern[2]])
+      });
+    } else {
+      // Number sequence
+      const step = randomInt(2, 5);
+      const start = randomInt(1, 5);
+      const seq = [];
+      for (let j = 0; j < 4; j++) seq.push(start + j * step);
+      questions.push({
+        type: 'logic_num',
+        text: `找规律，下一个数字是？`,
+        display: seq.slice(0, 3).join(' → ') + ' → ?',
+        answer: seq[3],
+        options: shuffle([seq[3], seq[3] + randomInt(1, 5), seq[3] - randomInt(1, 3)]).filter((v, i, a) => v > 0 && a.indexOf(v) === i).slice(0, 3)
+      });
+    }
+  }
+  return questions;
+}
+
+// ==================== SHAPE DRAWING ====================
+function drawShapeOnCanvas(shape, x, y, size) {
+  ctx.save();
+  ctx.translate(x, y);
+  
+  switch(shape) {
+    case 'circle':
+      ctx.beginPath();
+      ctx.arc(0, 0, size/2, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    case 'square':
+      ctx.fillRect(-size/2, -size/2, size, size);
+      break;
+    case 'triangle':
+      ctx.beginPath();
+      ctx.moveTo(0, -size/2);
+      ctx.lineTo(size/2, size/2);
+      ctx.lineTo(-size/2, size/2);
+      ctx.closePath();
+      ctx.fill();
+      break;
+    case 'rectangle':
+      ctx.fillRect(-size/2, -size/3, size, size * 0.66);
+      break;
+    case 'ellipse':
+      ctx.beginPath();
+      ctx.ellipse(0, 0, size/2, size/3, 0, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    case 'diamond':
+      ctx.beginPath();
+      ctx.moveTo(0, -size/2);
+      ctx.lineTo(size/2, 0);
+      ctx.lineTo(0, size/2);
+      ctx.lineTo(-size/2, 0);
+      ctx.closePath();
+      ctx.fill();
+      break;
+  }
+  ctx.restore();
+}
+
+// ==================== SCENE RENDERERS ====================
+function drawSplashScene() {
+  drawBackground();
+  
+  // Title
+  const bounce = Math.sin(animFrame * 0.08) * 10;
+  ctx.fillStyle = COLORS.forestGreen;
+  ctx.font = 'bold 64px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('🌲 动物森林 🌲', GAME_WIDTH/2, 200 + bounce);
+  
+  ctx.fillStyle = COLORS.textDark;
+  ctx.font = 'bold 32px sans-serif';
+  ctx.fillText('Animal Forest', GAME_WIDTH/2, 260);
+  
+  // Stars
+  for (let i = 0; i < 5; i++) {
+    const angle = (animFrame * 0.02) + (Math.PI * 2 / 5) * i;
+    const x = GAME_WIDTH/2 + Math.cos(angle) * 150;
+    const y = 350 + Math.sin(angle) * 30;
+    drawStar(x, y, 15, COLORS.starGold);
+  }
+  
+  // Loading
+  ctx.fillStyle = COLORS.textDark;
+  ctx.font = '24px sans-serif';
+  ctx.fillText(' Loading... ', GAME_WIDTH/2, 480);
+  
+  // Progress bar
+  const progress = (animFrame % 120) / 120;
+  ctx.fillStyle = '#ddd';
+  roundRect(GAME_WIDTH/2 - 100, 500, 200, 20, 10);
+  ctx.fill();
+  ctx.fillStyle = COLORS.forestGreen;
+  roundRect(GAME_WIDTH/2 - 100, 500, 200 * progress, 20, 10);
+  ctx.fill();
+  
+  // Auto transition
+  if (animFrame > 120) {
+    currentScene = 'modeSelect';
+    animFrame = 0;
+  }
+}
+
+function drawModeSelectScene() {
+  drawBackground();
+  
+  // Title
+  ctx.fillStyle = COLORS.forestGreen;
+  ctx.font = 'bold 48px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('🌲 动物森林 🌲', GAME_WIDTH/2, 80);
+  
+  ctx.fillStyle = COLORS.textDark;
+  ctx.font = '28px sans-serif';
+  ctx.fillText('请选择模式', GAME_WIDTH/2, 140);
+  
+  // Stars display
+  ctx.fillStyle = COLORS.starGold;
+  drawStar(GAME_WIDTH/2 - 60, 185, 15);
+  ctx.fillStyle = COLORS.textDark;
+  ctx.font = 'bold 28px sans-serif';
+  ctx.fillText(`${stars}`, GAME_WIDTH/2, 190);
+  
+  // Toddler mode button
+  const toddlerHover = isPointInRect(lastClickX, lastClickY, GAME_WIDTH/2 - 150, 260, 300, 100);
+  drawButton(GAME_WIDTH/2 - 150, 260, 300, 100, toddlerHover ? '#FFB74D' : COLORS.toddlerOrange, '👶 幼儿模式', '#fff', 25);
+  ctx.fillStyle = COLORS.textDark;
+  ctx.font = '20px sans-serif';
+  ctx.fillText('3-6岁 · 数字/颜色/图形', GAME_WIDTH/2, 380);
+  
+  // Child mode button
+  const childHover = isPointInRect(lastClickX, lastClickY, GAME_WIDTH/2 - 150, 420, 300, 100);
+  drawButton(GAME_WIDTH/2 - 150, 420, 300, 100, childHover ? '#64B5F6' : COLORS.childBlue, '👦 儿童模式', '#fff', 25);
+  ctx.fillStyle = COLORS.textDark;
+  ctx.font = '20px sans-serif';
+  ctx.fillText('7-12岁 · 数学/逻辑', GAME_WIDTH/2, 540);
+  
+  // Parent entry hint
+  ctx.fillStyle = '#999';
+  ctx.font = '18px sans-serif';
+  ctx.fillText('👨‍👩‍👧 家长入口：连续点击5次右下角', GAME_WIDTH/2, 590);
+}
+
+function drawHomeScene() {
+  drawBackground();
+  
+  const modeColor = selectedMode === 'toddler' ? COLORS.toddlerOrange : COLORS.childBlue;
+  
+  // Header
+  ctx.fillStyle = modeColor;
+  roundRect(20, 20, 760, 80, 20);
+  ctx.fill();
+  
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 32px sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText(`${selectedMode === 'toddler' ? '👶 幼儿模式' : '👦 儿童模式'}`, 50, 65);
+  
+  // Stars
+  drawStar(680, 60, 18);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 28px sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText(`${stars}`, 720, 68);
+  
+  // Back button
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  roundRect(20, 60, 50, 40, 10);
+  ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 24px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('←', 45, 86);
+  
+  // Animal cards
+  const animals = Object.entries(ANIMALS).filter(([key, a]) => 
+    selectedMode === 'toddler' ? (a.mode === 'toddler' || a.mode === 'both') : (a.mode === 'child' || a.mode === 'both')
+  );
+  
+  const cardW = 220;
+  const cardH = 200;
+  const startX = (GAME_WIDTH - (cardW * 2 + 40)) / 2;
+  const startY = 140;
+  
+  animals.forEach(([key, animal], i) => {
+    const col = i % 2;
+    const row = Math.floor(i / 2);
+    const x = startX + col * (cardW + 40);
+    const y = startY + row * (cardH + 30);
+    
+    const hover = isPointInRect(lastClickX, lastClickY, x, y, cardW, cardH);
+    
+    // Card background
+    ctx.fillStyle = hover ? animal.color : (animal.color + 'CC');
+    roundRect(x, y, cardW, cardH, 25);
+    ctx.fill();
+    
+    // Level indicator
+    const level = saveData.animals[key].level;
+    for (let s = 0; s < 3; s++) {
+      const starX = x + 30 + s * 25;
+      const starY = y + 30;
+      if (s < level) {
+        drawStar(starX, starY, 10, COLORS.starGold);
+      } else {
+        drawStar(starX, starY, 10, '#ccc');
+      }
+    }
+    
+    // Animal
+    drawAnimal(key, x + cardW/2, y + 90, 50, hover);
+    
+    // Name
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 24px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(animal.name, x + cardW/2, y + 165);
+    
+    // Subject label
+    ctx.font = '18px sans-serif';
+    const subjectLabels = { numbers: '认数字', shapes: '认图形', math: '加减乘除', logic: '逻辑排序' };
+    ctx.fillText(subjectLabels[animal.subject] || animal.subject, x + cardW/2, y + 185);
+  });
+}
+
+function drawGameScene() {
+  drawBackground();
+  
+  const q = questions[currentQuestion];
+  const modeColor = selectedMode === 'toddler' ? COLORS.toddlerOrange : COLORS.childBlue;
+  
+  // Header
+  ctx.fillStyle = modeColor;
+  roundRect(20, 20, 760, 70, 20);
+  ctx.fill();
+  
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 28px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(`${ANIMALS[selectedAnimal].name} · 第${currentLevel}关`, GAME_WIDTH/2, 60);
+  
+  // Progress
+  ctx.fillStyle = '#fff';
+  ctx.font = '22px sans-serif';
+  ctx.textAlign = 'right';
+  ctx.fillText(`${currentQuestion + 1}/${totalQuestions}`, 750, 60);
+  
+  // Progress bar
+  ctx.fillStyle = 'rgba(255,255,255,0.3)';
+  roundRect(100, 35, 200, 15, 7);
+  ctx.fill();
+  ctx.fillStyle = '#fff';
+  roundRect(100, 35, 200 * ((currentQuestion) / totalQuestions), 15, 7);
+  ctx.fill();
+  
+  // Stars earned this session
+  drawStar(350, 42, 12);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 20px sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText(`${sessionStars}`, 370, 48);
+  
+  // Question area
+  ctx.fillStyle = 'rgba(255,255,255,0.9)';
+  roundRect(100, 120, 600, 150, 25);
+  ctx.fill();
+  
+  // Question text
+  ctx.fillStyle = COLORS.textDark;
+  ctx.font = 'bold 28px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(q.text, GAME_WIDTH/2, 170);
+  
+  // Question display
+  if (q.type === 'shape') {
+    // Draw shape
+    const color = SHAPE_COLORS[SHAPES.indexOf(q.display) % SHAPE_COLORS.length];
+    ctx.fillStyle = color;
+    drawShapeOnCanvas(q.display, GAME_WIDTH/2, 235, 60);
+  } else if (q.type === 'math' || q.type === 'logic_num') {
+    ctx.font = 'bold 48px sans-serif';
+    ctx.fillText(q.display, GAME_WIDTH/2, 235);
+  } else {
+    ctx.font = '48px sans-serif';
+    ctx.fillText(q.display, GAME_WIDTH/2, 235);
+  }
+  
+  // Answer options
+  const optY = 320;
+  const optH = 90;
+  const optW = 180;
+  const optGap = 30;
+  const totalW = answerOptions.length * optW + (answerOptions.length - 1) * optGap;
+  const startX = (GAME_WIDTH - totalW) / 2;
+  
+  answerOptions.forEach((opt, i) => {
+    const x = startX + i * (optW + optGap);
+    const hover = isPointInRect(lastClickX, lastClickY, x, optY, optW, optH) && !isAnswered;
+    
+    let bgColor = modeColor;
+    if (isAnswered) {
+      if (opt === q.answer) {
+        bgColor = '#4CAF50';
+      } else if (opt === selectedAnswer) {
+        bgColor = '#FF5252';
+      }
+    } else if (hover) {
+      bgColor = selectedMode === 'toddler' ? '#FFB74D' : '#64B5F6';
+    }
+    
+    ctx.fillStyle = bgColor;
+    roundRect(x, optY, optW, optH, 20);
+    ctx.fill();
+    
+    // Option text
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 36px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(opt, x + optW/2, optY + optH/2 + 5);
+  });
+  
+  // Feedback
+  if (isAnswered) {
+    const feedbackY = 450;
+    if (selectedAnswer === q.answer) {
+      ctx.fillStyle = '#4CAF50';
+      ctx.font = 'bold 36px sans-serif';
+      ctx.fillText('🎉 正确！', GAME_WIDTH/2, feedbackY);
+    } else {
+      ctx.fillStyle = '#FF5252';
+      ctx.font = 'bold 36px sans-serif';
+      ctx.fillText(`❌ 正确答案是: ${q.answer}`, GAME_WIDTH/2, feedbackY);
+    }
+    
+    // Next button
+    const nextBtnX = GAME_WIDTH/2 - 80;
+    const nextBtnY = 500;
+    const nextHover = isPointInRect(lastClickX, lastClickY, nextBtnX, nextBtnY, 160, 60);
+    drawButton(nextBtnX, nextBtnY, 160, 60, nextHover ? '#45a049' : '#4CAF50', '下一题 →', '#fff', 15);
+  }
+  
+  drawParticles();
+}
+
+function drawResultScene() {
+  drawBackground();
+  
+  const passed = correctCount >= totalQuestions * 0.6;
+  const modeColor = selectedMode === 'toddler' ? COLORS.toddlerOrange : COLORS.childBlue;
+  
+  // Result banner
+  ctx.fillStyle = passed ? '#4CAF50' : '#FF9800';
+  roundRect(100, 80, 600, 100, 30);
+  ctx.fill();
+  
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 48px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(passed ? '🎉 过关！' : '⭐ 继续加油！', GAME_WIDTH/2, 140);
+  
+  // Stats
+  ctx.fillStyle = '#fff';
+  roundRect(150, 210, 500, 250, 25);
+  ctx.fill();
+  
+  ctx.fillStyle = COLORS.textDark;
+  ctx.font = 'bold 32px sans-serif';
+  ctx.fillText('本关成绩', GAME_WIDTH/2, 265);
+  
+  // Stars earned
+  const starsEarned = Math.ceil(correctCount / totalQuestions * 3);
+  for (let i = 0; i < 3; i++) {
+    const sx = GAME_WIDTH/2 - 80 + i * 60;
+    drawStar(sx, 320, 25, i < starsEarned ? COLORS.starGold : '#ccc');
+  }
+  
+  // Stats detail
+  ctx.font = 'bold 28px sans-serif';
+  ctx.fillText(`正确: ${correctCount}  题`, GAME_WIDTH/2, 380);
+  ctx.fillText(`错误: ${wrongCount}  题`, GAME_WIDTH/2, 420);
+  
+  const accuracy = Math.round(correctCount / totalQuestions * 100);
+  ctx.fillText(`正确率: ${accuracy}%`, GAME_WIDTH/2, 460);
+  
+  // Buttons
+  const retryHover = isPointInRect(lastClickX, lastClickY, 120, 500, 180, 70);
+  drawButton(120, 500, 180, 70, retryHover ? '#66BB6A' : '#4CAF50', '🔄 重玩', '#fff', 20);
+  
+  const homeHover = isPointInRect(lastClickX, lastClickY, 500, 500, 180, 70);
+  drawButton(500, 500, 180, 70, homeHover ? '#1976D2' : COLORS.childBlue, '🏠 返回', '#fff', 20);
+  
+  // Particles for win
+  if (passed && animFrame % 10 === 0) {
+    createParticles(randomInt(200, 600), randomInt(200, 400), 'star');
+  }
+  
+  drawParticles();
+}
+
+function drawParentScene() {
+  // Background
+  const grad = ctx.createLinearGradient(0, 0, 0, GAME_HEIGHT);
+  grad.addColorStop(0, '#f5f5f5');
+  grad.addColorStop(1, '#e0e0e0');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+  
+  // Header
+  ctx.fillStyle = '#5D4037';
+  roundRect(20, 20, 760, 70, 20);
+  ctx.fill();
+  
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 32px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('👨‍👩‍👧 家长面板', GAME_WIDTH/2, 62);
+  
+  // Back button
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  roundRect(30, 35, 60, 40, 10);
+  ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 24px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('←', 60, 60);
+  
+  // Stats section
+  ctx.fillStyle = '#fff';
+  roundRect(40, 110, 340, 220, 20);
+  ctx.fill();
+  
+  ctx.fillStyle = COLORS.textDark;
+  ctx.font = 'bold 26px sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText('📊 学习进度', 60, 150);
+  
+  ctx.font = '22px sans-serif';
+  Object.entries(ANIMALS).forEach(([key, animal], i) => {
+    const data = saveData.animals[key];
+    const y = 185 + i * 28;
+    ctx.fillStyle = animal.color;
+    ctx.fillText('●', 70, y);
+    ctx.fillStyle = COLORS.textDark;
+    ctx.fillText(`${animal.name}: 第${data.level}关 | ⭐${data.stars}颗`, 95, y);
+  });
+  
+  // Stats section 2
+  ctx.fillStyle = '#fff';
+  roundRect(400, 110, 360, 220, 20);
+  ctx.fill();
+  
+  ctx.fillStyle = COLORS.textDark;
+  ctx.font = 'bold 26px sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText('📈 正确率统计', 420, 150);
+  
+  ctx.font = '22px sans-serif';
+  let totalCorrect = 0, totalTotal = 0;
+  Object.entries(saveData.stats).forEach(([key, stat], i) => {
+    const animal = ANIMALS[key];
+    const y = 185 + i * 28;
+    const rate = stat.total > 0 ? Math.round(stat.correct / stat.total * 100) : 0;
+    ctx.fillStyle = animal.color;
+    ctx.fillText('●', 430, y);
+    ctx.fillStyle = COLORS.textDark;
+    ctx.fillText(`${animal.name}: ${rate}%`, 455, y);
+    totalCorrect += stat.correct;
+    totalTotal += stat.total;
+  });
+  
+  const overallRate = totalTotal > 0 ? Math.round(totalCorrect / totalTotal * 100) : 0;
+  ctx.font = 'bold 24px sans-serif';
+  ctx.fillText(`总体正确率: ${overallRate}%`, 420, 295);
+  
+  // Total stars
+  ctx.fillStyle = COLORS.starGold;
+  roundRect(40, 350, 340, 80, 20);
+  ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 28px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('⭐ 累计星星', GAME_WIDTH/2 - 80, 385);
+  ctx.font = 'bold 48px sans-serif';
+  ctx.fillText(`${stars}`, GAME_WIDTH/2 + 60, 393);
+  
+  // Mode switch
+  ctx.fillStyle = selectedMode === 'toddler' ? COLORS.toddlerOrange : COLORS.childBlue;
+  roundRect(400, 350, 360, 80, 20);
+  ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 26px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(`当前模式: ${selectedMode === 'toddler' ? '👶 幼儿' : '👦 儿童'}`, GAME_WIDTH/2, 378);
+  ctx.font = '20px sans-serif';
+  ctx.fillText('点击切换模式', GAME_WIDTH/2, 408);
+  
+  // PIN change
+  ctx.fillStyle = '#fff';
+  roundRect(40, 450, 340, 60, 15);
+  ctx.fill();
+  ctx.fillStyle = COLORS.textDark;
+  ctx.font = '22px sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText('🔒 修改PIN码: ' + parentPin.split('').map(() => '●').join(''), 60, 488);
+  
+  // Reset button
+  ctx.fillStyle = '#FF5252';
+  roundRect(400, 450, 360, 60, 15);
+  ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 26px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('🗑️ 重置所有进度', GAME_WIDTH/2, 488);
+}
+
+function drawPinScene() {
+  drawBackground();
+  
+  ctx.fillStyle = 'rgba(255,255,255,0.95)';
+  roundRect(200, 150, 400, 300, 30);
+  ctx.fill();
+  
+  ctx.fillStyle = COLORS.textDark;
+  ctx.font = 'bold 32px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('🔒 请输入家长PIN码', GAME_WIDTH/2, 210);
+  
+  // PIN display
+  ctx.fillStyle = '#eee';
+  roundRect(250, 240, 300, 60, 15);
+  ctx.fill();
+  
+  ctx.fillStyle = COLORS.textDark;
+  ctx.font = 'bold 48px sans-serif';
+  ctx.fillText(parentPinInput.split('').map(() => '●').join(' '), GAME_WIDTH/2, 280);
+  
+  // Keypad
+  const keys = ['1','2','3','4','5','6','7','8','9','←','0','确认'];
+  const keyW = 80;
+  const keyH = 50;
+  const keyGap = 15;
+  const keyStartX = 250;
+  const keyStartY = 320;
+  
+  keys.forEach((key, i) => {
+    const col = i % 3;
+    const row = Math.floor(i / 3);
+    const x = keyStartX + col * (keyW + keyGap);
+    const y = keyStartY + row * (keyH + keyGap);
+    
+    const hover = isPointInRect(lastClickX, lastClickY, x, y, keyW, keyH);
+    
+    ctx.fillStyle = key === '确认' ? '#4CAF50' : key === '←' ? '#FF9800' : (hover ? '#ddd' : '#f5f5f5');
+    roundRect(x, y, keyW, keyH, 10);
+    ctx.fill();
+    
+    ctx.fillStyle = key === '确认' || key === '←' ? '#fff' : COLORS.textDark;
+    ctx.font = 'bold 24px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(key, x + keyW/2, y + keyH/2 + 8);
+  });
+  
+  // Cancel
+  const cancelHover = isPointInRect(lastClickX, lastClickY, 250, 545, 300, 45);
+  ctx.fillStyle = cancelHover ? '#FFCDD2' : '#FFEBEE';
+  roundRect(250, 545, 300, 45, 10);
+  ctx.fill();
+  ctx.fillStyle = '#FF5252';
+  ctx.font = '22px sans-serif';
+  ctx.fillText('取消', GAME_WIDTH/2, 570);
+}
+
+// ==================== INPUT HANDLING ====================
+let lastClickX = 0, lastClickY = 0;
+
+function getClickPos(e) {
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = GAME_WIDTH / rect.width;
+  const scaleY = GAME_HEIGHT / rect.height;
+  
+  const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+  const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+  
+  lastClickX = (clientX - rect.left) * scaleX;
+  lastClickY = (clientY - rect.top) * scaleY;
+}
+
+canvas.addEventListener('click', (e) => {
+  e.preventDefault();
+  sound.init();
+  sound.play('click');
+  getClickPos(e);
+  handleClick();
+});
+
+canvas.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  sound.init();
+  sound.play('click');
+  getClickPos(e);
+  handleClick();
+}, { passive: false });
+
+function handleClick() {
+  const now = Date.now();
+  
+  switch(currentScene) {
+    case 'modeSelect':
+      // Toddler mode
+      if (isPointInRect(lastClickX, lastClickY, GAME_WIDTH/2 - 150, 260, 300, 100)) {
+        selectedMode = 'toddler';
+        currentScene = 'home';
+        sound.play('click');
+      }
+      // Child mode
+      else if (isPointInRect(lastClickX, lastClickY, GAME_WIDTH/2 - 150, 420, 300, 100)) {
+        selectedMode = 'child';
+        currentScene = 'home';
+        sound.play('click');
+      }
+      // Parent entry (5 clicks)
+      else if (lastClickX > GAME_WIDTH - 150 && lastClickY > GAME_HEIGHT - 150) {
+        if (now - lastClickTime < 500) {
+          clickCount++;
+        } else {
+          clickCount = 1;
+        }
+        lastClickTime = now;
+        if (clickCount >= 5) {
+          clickCount = 0;
+          if (Date.now() < parentPinLockUntil) {
+            alert(`锁定中，请${Math.ceil((parentPinLockUntil - Date.now()) / 1000)}秒后重试`);
+          } else {
+            currentScene = 'pin';
+            parentPinInput = '';
+          }
+        }
+      }
+      break;
+      
+    case 'home':
+      // Back
+      if (isPointInRect(lastClickX, lastClickY, 20, 60, 50, 40)) {
+        currentScene = 'modeSelect';
+      }
+      // Animal cards
+      else {
+        const animals = Object.entries(ANIMALS).filter(([key, a]) => 
+          selectedMode === 'toddler' ? (a.mode === 'toddler' || a.mode === 'both') : (a.mode === 'child' || a.mode === 'both')
+        );
+        
+        const cardW = 220;
+        const cardH = 200;
+        const startX = (GAME_WIDTH - (cardW * 2 + 40)) / 2;
+        const startY = 140;
+        
+        animals.forEach(([key, animal], i) => {
+          const col = i % 2;
+          const row = Math.floor(i / 2);
+          const x = startX + col * (cardW + 40);
+          const y = startY + row * (cardH + 30);
+          
+          if (isPointInRect(lastClickX, lastClickY, x, y, cardW, cardH)) {
+            selectedAnimal = key;
+            currentLevel = saveData.animals[key].level;
+            startGame();
+          }
+        });
+      }
+      break;
+      
+    case 'game':
+      if (!isAnswered) {
+        const optY = 320;
+        const optH = 90;
+        const optW = 180;
+        const optGap = 30;
+        const totalW = answerOptions.length * optW + (answerOptions.length - 1) * optGap;
+        const startX = (GAME_WIDTH - totalW) / 2;
+        
+        answerOptions.forEach((opt, i) => {
+          const x = startX + i * (optW + optGap);
+          if (isPointInRect(lastClickX, lastClickY, x, optY, optW, optH)) {
+            selectedAnswer = opt;
+            isAnswered = true;
+            
+            if (opt === questions[currentQuestion].answer) {
+              correctCount++;
+              sessionCorrect++;
+              sessionStars++;
+              stars++;
+              saveData.animals[selectedAnimal].stars++;
+              saveData.stats[selectedAnimal].correct++;
+              createParticles(lastClickX, lastClickY, 'correct');
+              sound.play('correct');
+              setTimeout(() => sound.play('star'), 200);
+            } else {
+              wrongCount++;
+              saveData.stats[selectedAnimal].total++;
+              createParticles(lastClickX, lastClickY, 'wrong');
+              sound.play('wrong');
+            }
+            saveSaveData();
+          }
+        });
+      } else {
+        // Next button
+        if (isPointInRect(lastClickX, lastClickY, GAME_WIDTH/2 - 80, 500, 160, 60)) {
+          currentQuestion++;
+          if (currentQuestion >= totalQuestions) {
+            saveData.stats[selectedAnimal].total += totalQuestions;
+            saveSaveData();
+            currentScene = 'result';
+          } else {
+            selectedAnswer = null;
+            isAnswered = false;
+          }
+        }
+      }
+      break;
+      
+    case 'result':
+      // Retry
+      if (isPointInRect(lastClickX, lastClickY, 120, 500, 180, 70)) {
+        startGame();
+      }
+      // Home
+      else if (isPointInRect(lastClickX, lastClickY, 500, 500, 180, 70)) {
+        currentScene = 'home';
+      }
+      break;
+      
+    case 'parent':
+      // Back
+      if (isPointInRect(lastClickX, lastClickY, 30, 35, 60, 40)) {
+        currentScene = 'home';
+      }
+      // Mode switch
+      else if (isPointInRect(lastClickX, lastClickY, 400, 350, 360, 80)) {
+        selectedMode = selectedMode === 'toddler' ? 'child' : 'toddler';
+        saveData.mode = selectedMode;
+        saveSaveData();
+      }
+      // PIN change
+      else if (isPointInRect(lastClickX, lastClickY, 40, 450, 340, 60)) {
+        inputMode = true;
+        inputText = '';
+        inputPrompt = '新PIN码（4位数字）';
+      }
+      // Reset
+      else if (isPointInRect(lastClickX, lastClickY, 400, 450, 360, 60)) {
+        if (confirm('确定要重置所有进度吗？此操作不可撤销！')) {
+          resetAllProgress();
+        }
+      }
+      break;
+      
+    case 'pin':
+      handlePinInput();
+      break;
+  }
+}
+
+function handlePinInput() {
+  const keys = ['1','2','3','4','5','6','7','8','9','0'];
+  const keyW = 80;
+  const keyH = 50;
+  const keyGap = 15;
+  const keyStartX = 250;
+  const keyStartY = 320;
+  
+  // Number keys
+  keys.forEach((key, i) => {
+    const col = i % 3;
+    const row = Math.floor(i / 3);
+    const x = keyStartX + col * (keyW + keyGap);
+    const y = keyStartY + row * (keyH + keyGap);
+    
+    if (isPointInRect(lastClickX, lastClickY, x, y, keyW, keyH)) {
+      if (parentPinInput.length < 4) {
+        parentPinInput += key;
+        sound.play('click');
+      }
+    }
+  });
+  
+  // Backspace
+  if (isPointInRect(lastClickX, lastClickY, keyStartX, keyStartY + 3 * (keyH + keyGap), keyW, keyH)) {
+    parentPinInput = parentPinInput.slice(0, -1);
+    sound.play('click');
+  }
+  
+  // Confirm
+  if (isPointInRect(lastClickX, lastClickY, keyStartX + 2 * (keyW + keyGap), keyStartY + 3 * (keyH + keyGap), keyW, keyH)) {
+    if (parentPinInput === parentPin) {
+      currentScene = 'parent';
+      parentPinInput = '';
+      parentPinAttempts = 0;
+      sound.play('correct');
+    } else {
+      parentPinAttempts++;
+      sound.play('wrong');
+      if (parentPinAttempts >= 5) {
+        parentPinLockUntil = Date.now() + 15 * 60 * 1000;
+        alert('连续5次错误，锁定15分钟');
+        currentScene = 'modeSelect';
+        parentPinInput = '';
+        parentPinAttempts = 0;
+      } else {
+        alert(`PIN码错误，剩余${5 - parentPinAttempts}次机会`);
+        parentPinInput = '';
+      }
+    }
+  }
+  
+  // Cancel
+  if (isPointInRect(lastClickX, lastClickY, 250, 545, 300, 45)) {
+    currentScene = 'modeSelect';
+    parentPinInput = '';
+  }
+}
+
+function startGame() {
+  currentScene = 'game';
+  currentQuestion = 0;
+  correctCount = 0;
+  wrongCount = 0;
+  sessionStars = 0;
+  sessionCorrect = 0;
+  sessionTotal = 0;
+  isAnswered = false;
+  selectedAnswer = null;
+  particles = [];
+  
+  questions = generateQuestions(selectedAnimal, currentLevel);
+  answerOptions = [];
+  
+  // Generate answer options for first question
+  const q = questions[0];
+  answerOptions = shuffle(q.options);
+  
+  saveData.daily[todayStr].sessions++;
+  saveSaveData();
+}
+
+function resetAllProgress() {
+  saveData = {
+    version: 1,
+    pin: '0000',
+    mode: 'toddler',
+    stars: 0,
+    animals: {
+      fox:    { level: 1, stars: 0, completed: [] },
+      bear:   { level: 1, stars: 0, completed: [] },
+      bird:   { level: 1, stars: 0, completed: [] },
+      cat:    { level: 1, stars: 0, completed: [] },
+      monkey: { level: 1, stars: 0, completed: [] },
+      owl:    { level: 1, stars: 0, completed: [] }
+    },
+    stats: {
+      fox:    { total: 0, correct: 0 },
+      bear:   { total: 0, correct: 0 },
+      bird:   { total: 0, correct: 0 },
+      cat:    { total: 0, correct: 0 },
+      monkey: { total: 0, correct: 0 },
+      owl:    { total: 0, correct: 0 }
+    },
+    daily: {}
+  };
+  stars = 0;
+  parentPin = '0000';
+  saveSaveData();
+  alert('已重置所有进度');
+}
+
+// ==================== GAME LOOP ====================
+function gameLoop() {
+  animFrame++;
+  
+  // Update session time
+  const now = Date.now();
+  if (currentScene === 'game' || currentScene === 'home') {
+    saveData.daily[todayStr].time = Math.floor((now - gameStartTime) / 1000);
+    if (animFrame % 60 === 0) saveSaveData();
+  }
+  
+  updateParticles();
+  
+  // Render
+  switch(currentScene) {
+    case 'splash':
+      drawSplashScene();
+      break;
+    case 'modeSelect':
+      drawModeSelectScene();
+      break;
+    case 'home':
+      drawHomeScene();
+      break;
+    case 'game':
+      drawGameScene();
+      break;
+    case 'result':
+      drawResultScene();
+      break;
+    case 'parent':
+      drawParentScene();
+      break;
+    case 'pin':
+      drawPinScene();
+      break;
+  }
+  
+  requestAnimationFrame(gameLoop);
+}
+
+// ==================== INIT ====================
+loadSaveData();
+selectedMode = saveData.mode || 'toddler';
+gameLoop();
+</script>
+</body>
+</html>
